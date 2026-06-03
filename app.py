@@ -1,7 +1,7 @@
 """智慧課程助教系統 — Streamlit 介面。
 
 功能：上傳課程 PDF → 自動切割/嵌入 → 自然語言問答(含引用來源) / 摘要 / 出題。
-對話紀錄保存於 SQLite。
+對話紀錄保存於 SQLite。介面樣式集中於 src/ui.py（編輯學院風）。
 """
 from __future__ import annotations
 
@@ -11,13 +11,14 @@ import uuid
 import pandas as pd
 import streamlit as st
 
-from src import analytics, config, db, quiz
+from src import analytics, config, db, quiz, ui
 from src.graph import classify, run
 from src.ingest import ingest_pdf
 from src.llm import MissingAPIKeyError, list_models
 from src.vectorstore import delete_source, document_count, list_sources
 
-st.set_page_config(page_title="智慧課程助教系統", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="智慧課程助教", page_icon="📖", layout="wide")
+ui.inject()
 
 # 把使用者在網頁遇到的錯誤完整寫進 data/app.log，方便事後診斷
 logging.basicConfig(
@@ -46,25 +47,25 @@ if "messages" not in st.session_state:
 if "api_key" not in st.session_state:
     st.session_state.api_key = ""
 
-# ---- 側邊欄：API key、上傳與狀態 ----
+# ---- 側邊欄：金鑰、模型、教材、對話 ----
 with st.sidebar:
-    st.header("🔑 Gemini API Key")
+    ui.section("存取金鑰")
     st.session_state.api_key = st.text_input(
-        "輸入你的 Gemini API key",
+        "Gemini API Key",
         value=st.session_state.api_key,
         type="password",
-        help="只保存在這個瀏覽器分頁，關閉或重新整理後需重新輸入。取得：https://aistudio.google.com/app/apikey",
-        placeholder="AIza...",
+        help="僅保存在此瀏覽器分頁，關閉或重新整理後需重新輸入。取得：https://aistudio.google.com/app/apikey",
+        placeholder="AIza…",
     )
     if st.session_state.api_key.strip():
-        st.success("已輸入 key，可使用問答／摘要／出題。")
+        st.success("金鑰已就緒")
     else:
-        st.info("尚未輸入 key。可上傳教材與檢索，但問答／摘要／出題需要 key。")
+        st.info("尚未設定金鑰：可上傳與檢索，問答與測驗需要金鑰")
 
     # 模型選擇：預設清單 + 可用 key 查詢實際可用模型
     if "model_options" not in st.session_state:
         st.session_state.model_options = list(config.GEMINI_MODEL_CHOICES)
-    if st.button("查詢此 key 可用的模型") and st.session_state.api_key.strip():
+    if st.button("查詢可用模型") and st.session_state.api_key.strip():
         try:
             models = list_models(st.session_state.api_key)
             if models:
@@ -75,16 +76,16 @@ with st.sidebar:
         except Exception as e:  # noqa: BLE001
             st.error(f"查詢失敗：{e}")
     st.session_state.model = st.selectbox(
-        "選擇模型", st.session_state.model_options, index=0,
-        help="若預設模型回報 404，按上方按鈕查出這把 key 實際可用的模型再選。",
+        "模型", st.session_state.model_options, index=0,
+        help="若預設模型回報 404，按上方查詢實際可用的模型再選。",
     )
 
-    st.divider()
-    st.header("📚 課程教材")
+    st.markdown("")
+    ui.section("課程教材")
 
     # ---- 新增文件 ----
     uploaded = st.file_uploader("上傳課程 PDF", type=["pdf"], accept_multiple_files=True)
-    if uploaded and st.button("➕ 匯入教材", type="primary"):
+    if uploaded and st.button("匯入教材", type="primary"):
         for f in uploaded:
             dest = config.UPLOAD_DIR / f.name
             dest.write_bytes(f.getbuffer())
@@ -99,28 +100,28 @@ with st.sidebar:
         st.rerun()
 
     # ---- 已匯入文件清單（可刪除）----
-    st.subheader("📂 已匯入文件")
     sources = list_sources()
     if not sources:
-        st.caption("（尚無文件，請於上方上傳並匯入）")
+        st.caption("尚無文件，請於上方上傳並匯入。")
     else:
         for name, cnt in sources.items():
-            col_a, col_b = st.columns([0.78, 0.22])
-            col_a.write(f"📄 {name}  \n　{cnt} 片段")
-            if col_b.button("🗑 刪除", key=f"del_{name}", help=f"從知識庫移除 {name}"):
+            col_a, col_b = st.columns([0.74, 0.26])
+            col_a.markdown(
+                f'<div class="doc-row">{name}<br><small>{cnt} 個片段</small></div>',
+                unsafe_allow_html=True,
+            )
+            if col_b.button("移除", key=f"del_{name}", help=f"從知識庫移除 {name}"):
                 removed = delete_source(name)
-                # 一併刪掉 uploads 內的原始檔（若存在）
                 fp = config.UPLOAD_DIR / name
                 if fp.exists():
                     fp.unlink()
-                st.success(f"已刪除 {name}（{removed} 片段）")
+                st.success(f"已移除 {name}（{removed} 片段）")
                 log.info("刪除文件 %s：%d 片段", name, removed)
                 st.rerun()
+        st.caption(f"知識庫共 {document_count()} 個片段")
 
-    st.caption(f"知識庫片段數：{document_count()}")
-
-    st.divider()
-    st.subheader("💬 對話")
+    st.markdown("")
+    ui.section("對話")
     if st.button("開新對話"):
         sid = uuid.uuid4().hex[:12]
         st.session_state.session_id = sid
@@ -129,11 +130,15 @@ with st.sidebar:
         st.session_state.iquiz = st.session_state.iquiz_result = None
         st.session_state.iquiz_submitted = False
         st.rerun()
-    st.caption(f"目前 session：`{st.session_state.session_id}`（你的專屬，資料與他人隔離）")
+    st.caption(f"專屬 session：{st.session_state.session_id}　·　資料與他人隔離")
 
 # ---- 主畫面 ----
-st.title("🎓 智慧課程助教系統")
-st.caption("RAG + LangGraph + ChromaDB + Gemini ｜ 問答・摘要・出題")
+ui.hero(
+    "智慧課程助教",
+    "上傳課程教材，即可進行有憑有據的課程問答、重點摘要，"
+    "以及依個人弱點自動調整的學習測驗與成效分析。",
+    kicker="COURSE ASSISTANT · RAG",
+)
 
 # ---- 互動測驗（計分・依弱點適性出題）----
 ss = st.session_state
@@ -167,17 +172,17 @@ def _generate_quiz(topic: str, num: int, adaptive: bool):
     return False
 
 
-with st.expander("🎯 互動測驗（計分・依弱點適性出題）", expanded=True):
+with st.expander("互動測驗　·　計分與依弱點適性出題", expanded=True):
     c1, c2, c3 = st.columns([0.5, 0.25, 0.25])
     it_topic = c1.text_input("主題", placeholder="例如：記憶體階層、CPU 結構", key="iquiz_topic")
     it_num = c2.selectbox("題數", [3, 5, 10], index=1, key="iquiz_num")
     it_mode = c3.selectbox("出題模式", ["一般（依主題）", "適性（依我的弱點）"], key="iquiz_mode")
 
-    if st.button("🎲 出題", type="primary", key="iquiz_gen"):
+    if st.button("出題", type="primary", key="iquiz_gen"):
         if document_count() == 0:
             st.warning("知識庫是空的，請先在左側上傳並匯入教材。")
         elif not ss.api_key.strip():
-            st.warning("請先在左側輸入 Gemini API key。")
+            st.warning("請先在左側輸入 Gemini API Key。")
         else:
             with st.spinner("出題中…"):
                 if _generate_quiz(it_topic, it_num, it_mode.startswith("適性")):
@@ -187,18 +192,20 @@ with st.expander("🎯 互動測驗（計分・依弱點適性出題）", expand
     # 作答中
     if iq and not ss.iquiz_submitted:
         if iq["meta"].get("focus"):
-            st.info("🎯 本次針對你的弱點觀念：" + "、".join(iq["meta"]["focus"]))
+            st.info("本次聚焦弱點觀念：" + "、".join(iq["meta"]["focus"]))
         with st.form("iquiz_form"):
             answers = []
             for i, q in enumerate(iq["questions"]):
                 opts = q.get("options") or {}
                 letters = sorted(opts.keys())
-                st.markdown(f"**第 {i+1} 題**（{q.get('concept', '')}）　{q.get('question', '')}")
+                st.markdown(f"**第 {i+1} 題**　{q.get('question', '')}"
+                            f"　<small style='color:#6F6B61'>{q.get('concept', '')}</small>",
+                            unsafe_allow_html=True)
                 ans = st.radio("選擇答案", letters, index=None, key=f"iq_{i}",
-                               format_func=lambda L, o=opts: f"{L}. {o.get(L, '')}",
+                               format_func=lambda L, o=opts: f"{L}.　{o.get(L, '')}",
                                label_visibility="collapsed")
                 answers.append(ans)
-            if st.form_submit_button("✅ 送出作答", type="primary"):
+            if st.form_submit_button("送出作答", type="primary"):
                 responses = quiz.grade(iq["questions"], answers)
                 attempt_id = db.save_quiz_result(
                     ss.session_id, iq["meta"]["topic"], "選擇題",
@@ -214,29 +221,32 @@ with st.expander("🎯 互動測驗（計分・依弱點適性出題）", expand
     if iq and ss.iquiz_submitted and ss.iquiz_result:
         r = ss.iquiz_result
         pct = round(100 * r["score"] / r["total"]) if r["total"] else 0
-        st.success(f"得分：{r['score']} / {r['total']}（{pct}%）")
+        st.success(f"得分　{r['score']} / {r['total']}　（{pct}%）")
         for i, q in enumerate(iq["questions"]):
             resp = r["responses"][i]
-            icon = "✅" if resp["is_correct"] else "❌"
-            st.markdown(f"{icon} **第 {i+1} 題**（{q.get('concept', '')}）　{q.get('question', '')}")
-            st.caption(f"你的答案：{resp['user_answer'] or '未作答'}　｜　正解：{q.get('answer')}"
-                       f"　｜　{q.get('explanation', '')}")
+            if resp["is_correct"]:
+                mark = '<span class="mk mk-ok">答對</span>'
+            else:
+                mark = '<span class="mk mk-no">答錯</span>'
+            st.markdown(f'{mark}　**第 {i+1} 題**　{q.get("question", "")}', unsafe_allow_html=True)
+            st.caption(f"你的答案：{resp['user_answer'] or '未作答'}　·　正解：{q.get('answer')}"
+                       f"　·　{q.get('explanation', '')}")
         cc1, cc2 = st.columns(2)
-        if cc1.button("🔁 針對弱點再來一輪", key="iquiz_again"):
+        if cc1.button("依弱點再練一輪", type="primary", key="iquiz_again"):
             with st.spinner("依弱點出題中…"):
                 if _generate_quiz("", r["total"], adaptive=True):
                     st.rerun()
-        if cc2.button("🆕 重新出題", key="iquiz_reset"):
+        if cc2.button("重新出題", key="iquiz_reset"):
             ss.iquiz = ss.iquiz_result = None
             ss.iquiz_submitted = False
             st.rerun()
 
 # ---- 學習成效分析儀表板 ----
-with st.expander("📊 學習成效分析（量化『變強』）", expanded=False):
+with st.expander("學習成效分析　·　量化學習進步", expanded=False):
     ov = analytics.overview(ss.session_id)
     m = ov["metrics"]
     if not m["num_attempts"]:
-        st.info("尚無作答紀錄，先完成上方一次互動測驗就會出現成效數據。")
+        st.info("尚無作答紀錄，完成上方一次互動測驗後即可看到成效數據。")
     else:
         def _p(x):
             return f"{round(100 * x, 1)}%" if x is not None else "—"
@@ -264,12 +274,12 @@ with st.expander("📊 學習成效分析（量化『變強』）", expanded=Fal
 
         weak = db.weak_concepts(ss.session_id)
         if weak:
-            st.caption("🔍 待加強觀念：" + "、".join(weak))
+            st.caption("待加強觀念：" + "、".join(weak))
 
         e1, e2 = st.columns(2)
-        e1.download_button("⬇️ 下載作答 CSV", analytics.responses_csv(ss.session_id),
+        e1.download_button("下載作答紀錄（CSV）", analytics.responses_csv(ss.session_id),
                            file_name="quiz_responses.csv", mime="text/csv")
-        e2.download_button("⬇️ 下載成效報告 (Markdown)", analytics.build_report(ss.session_id),
+        e2.download_button("下載成效報告（Markdown）", analytics.build_report(ss.session_id),
                            file_name="learning_report.md", mime="text/markdown")
 
 for m in st.session_state.messages:
@@ -277,9 +287,9 @@ for m in st.session_state.messages:
         st.markdown(m["content"])
         if m.get("sources"):
             srcs = "、".join(f"{s['source']} 第{s['page']}頁" for s in m["sources"])
-            st.caption(f"📎 引用來源：{srcs}")
+            st.caption(f"引用來源：{srcs}")
 
-prompt = st.chat_input("輸入問題，例如：什麼是 RAG？／幫我整理重點／幫我出 5 題選擇題")
+prompt = st.chat_input("輸入問題，例如：什麼是 RAG？／幫我整理重點／出 5 題測驗")
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt, "sources": None})
     db.save_message(st.session_state.session_id, "user", prompt)
@@ -295,7 +305,7 @@ if prompt:
     else:
         with st.chat_message("assistant"):
             task = classify(prompt)
-            with st.spinner(f"任務分流：{TASK_LABEL[task]} … 生成中"):
+            with st.spinner(f"{TASK_LABEL[task]}　生成中…"):
                 try:
                     log.info("提問 task=%s model=%s q=%r",
                              task, st.session_state.get("model"), prompt)
@@ -304,16 +314,16 @@ if prompt:
                     answer = state["answer"]
                     sources = state.get("sources") if task == "qa" else None
                 except MissingAPIKeyError as e:
-                    answer, sources = f"⚠️ {e}", None
+                    answer, sources = str(e), None
                     log.warning("缺少 API key：%s", e)
                 except Exception as e:  # noqa: BLE001
-                    answer, sources = f"⚠️ 生成失敗：{e}", None
+                    answer, sources = f"生成失敗：{e}", None
                     log.exception("生成失敗 task=%s model=%s q=%r",
                                   task, st.session_state.get("model"), prompt)
             st.markdown(answer)
             if sources:
                 srcs = "、".join(f"{s['source']} 第{s['page']}頁" for s in sources)
-                st.caption(f"📎 引用來源：{srcs}")
+                st.caption(f"引用來源：{srcs}")
 
         st.session_state.messages.append(
             {"role": "assistant", "content": answer, "sources": sources}
