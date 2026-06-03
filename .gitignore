@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/
+extracted/
+
+# 不公開個人報告 PDF
+*.pdf
