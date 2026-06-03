@@ -45,24 +45,52 @@ class Plan(BaseModel):
 
 
 _PLAN_SYS = (
-    "你是課程助教的任務規劃器，要把使用者需求拆成『最少的必要步驟』。規則：\n"
-    "1. 若需求明顯模糊、有多種完全不同的解讀（例如同一詞有多種意思、範圍不清）→ 只填 clarify "
-    "（一句反問），steps 留空。不要為了反問而反問，能合理推斷就直接做。\n"
-    "2. 若使用者想『準備考試 / 複習 / 考前衝刺 / 幫我準備』→ 用一個 exam_prep 步驟，query 放範圍。\n"
-    "3. 單一簡單需求 → 一個步驟（qa 問答 / summary 摘要 / quiz 出題）。\n"
-    "4. 複合需求（比較不同章節、又問又出題、跨章節整理）→ 拆成多步，最多 4 步。\n"
+    "你是課程助教的任務規劃器，把使用者需求拆成『最少的必要步驟』。\n"
+    "重要前提：系統只有『使用者已上傳的課程教材』這一個知識庫。因此：\n"
+    "- 絕對不要反問『是哪一門課 / 哪個範圍 / 你想做什麼』——直接用現有教材處理即可。\n"
+    "- 只有當問題本身的『學科詞義有多種完全不同解讀』(例如 cache 可指 CPU 快取或瀏覽器快取) "
+    "才填 clarify 反問，且最多一次；其餘情況一律直接動手，steps 不可為空。\n"
+    "- 若提供了『對話脈絡』，務必把它當成同一段對話，理解使用者這句是在回答先前的反問，不要重複問。\n"
+    "判斷任務：\n"
+    "1. 想準備考試 / 複習 / 考前衝刺 / 幫我準備 → 一個 exam_prep 步驟（query 放範圍，沒指定就用『全部』）。\n"
+    "2. 單一簡單需求 → 一個步驟（qa 問答 / summary 摘要 / quiz 出題）。\n"
+    "3. 複合需求（比較章節、又問又出題、跨章節整理）→ 拆成多步，最多 4 步。\n"
     "請用繁體中文。"
 )
 
 
-def make_plan(question: str, api_key=None, model=None) -> dict:
+def _history_text(history: list[dict] | None) -> str:
+    if not history:
+        return ""
+    lines = []
+    for m in history[-6:]:
+        who = "使用者" if m.get("role") == "user" else "助教"
+        lines.append(f"{who}：{m.get('content', '')}")
+    return "對話脈絡：\n" + "\n".join(lines) + "\n\n"
+
+
+def make_plan(question: str, history: list[dict] | None = None,
+              api_key=None, model=None) -> dict:
     llm = get_llm(api_key, model).with_structured_output(Plan)
-    plan: Plan = llm.invoke([("system", _PLAN_SYS), ("human", f"使用者需求：{question}")])
+    human = _history_text(history) + f"目前使用者需求：{question}"
+    plan: Plan = llm.invoke([("system", _PLAN_SYS), ("human", human)])
     steps = [s.model_dump() for s in plan.steps]
     clarify = (plan.clarify or "").strip()
     if not clarify and not steps:
         steps = [{"action": "qa", "query": question, "note": "回答問題"}]
     return {"clarify": clarify, "steps": steps}
+
+
+# 考前衝刺意圖（規則優先，避免反問迴圈）
+def _is_exam_prep(question: str) -> bool:
+    q = question
+    if "考前" in q or "期中考" in q or "期末考" in q or "衝刺" in q:
+        return True
+    if ("考試" in q or "考" in q) and ("準備" in q or "複習" in q):
+        return True
+    if "幫我準備" in q or "幫我複習" in q:
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -183,13 +211,20 @@ def _synthesize(question: str, results: list[dict], api_key, model) -> str:
 # ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
-def run_agent(question: str, session_id: str, api_key: str | None = None,
-              model: str | None = None, verify_qa: bool = True,
-              progress: Progress | None = None) -> dict:
+def run_agent(question: str, session_id: str, history: list[dict] | None = None,
+              api_key: str | None = None, model: str | None = None,
+              verify_qa: bool = True, progress: Progress | None = None) -> dict:
     prog = progress or _noop
 
+    # 考前衝刺：規則優先，直接執行，絕不反問（避免迴圈）
+    if _is_exam_prep(question):
+        prog("準備考前衝刺…")
+        body, sources = _exam_prep_step(question, session_id, api_key, model, prog)
+        return {"answer": body, "steps": None, "sources": sources,
+                "grounded": None, "multi": False, "is_clarify": False}
+
     prog("規劃步驟…")
-    plan = make_plan(question, api_key, model)
+    plan = make_plan(question, history, api_key, model)
 
     # A. 反問澄清
     if plan["clarify"]:

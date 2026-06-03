@@ -323,9 +323,10 @@ if prompt:
                      use_agent, verify_on, st.session_state.get("model"), prompt)
             try:
                 if use_agent:
+                    history = st.session_state.messages[:-1]
                     with st.status("助教思考中…", expanded=True) as status:
                         res = agent.run_agent(
-                            prompt, st.session_state.session_id,
+                            prompt, st.session_state.session_id, history=history,
                             api_key=st.session_state.api_key,
                             model=st.session_state.get("model"), verify_qa=verify_on,
                             progress=lambda msg: status.write("· " + msg))
