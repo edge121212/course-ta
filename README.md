@@ -3,8 +3,8 @@ title: 智慧課程助教系統
 emoji: 🎓
 colorFrom: blue
 colorTo: indigo
-sdk: streamlit
-app_file: app.py
+sdk: docker
+app_port: 8501
 pinned: false
 short_description: RAG 課程助教 — 問答/摘要/適性測驗與學習成效分析
 ---

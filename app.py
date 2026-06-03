@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 
 import pandas as pd
 import streamlit as st
@@ -32,8 +33,14 @@ db.init_db()
 TASK_LABEL = {"qa": "課程問答", "summary": "摘要生成", "quiz": "練習題生成"}
 
 # ---- session 狀態 ----
+# 每位訪客自動分配獨立 session id，存在網址 ?sid= 以便重整後仍保留，
+# 不同訪客資料互相隔離（多人測試成效數據不會混在一起）。
 if "session_id" not in st.session_state:
-    st.session_state.session_id = "default"
+    sid = st.query_params.get("sid")
+    if not sid:
+        sid = uuid.uuid4().hex[:12]
+        st.query_params["sid"] = sid
+    st.session_state.session_id = sid
 if "messages" not in st.session_state:
     st.session_state.messages = db.load_history(st.session_state.session_id)
 if "api_key" not in st.session_state:
@@ -115,11 +122,14 @@ with st.sidebar:
     st.divider()
     st.subheader("💬 對話")
     if st.button("開新對話"):
-        # 以訊息數產生新的 session 名稱（避免使用時間 API）
-        st.session_state.session_id = f"session-{len(db.list_sessions()) + 1}"
+        sid = uuid.uuid4().hex[:12]
+        st.session_state.session_id = sid
+        st.query_params["sid"] = sid
         st.session_state.messages = []
+        st.session_state.iquiz = st.session_state.iquiz_result = None
+        st.session_state.iquiz_submitted = False
         st.rerun()
-    st.caption(f"目前 session：{st.session_state.session_id}")
+    st.caption(f"目前 session：`{st.session_state.session_id}`（你的專屬，資料與他人隔離）")
 
 # ---- 主畫面 ----
 st.title("🎓 智慧課程助教系統")
