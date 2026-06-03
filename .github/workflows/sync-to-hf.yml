@@ -1,0 +1,25 @@
+name: Sync to Hugging Face Space
+
+# 每次 push 到 main，就自動把程式碼推到 Hugging Face Space 觸發重新部署。
+# 也可在 Actions 頁面手動觸發（workflow_dispatch）。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 需要完整歷史才能 push
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git push --force \
+            "https://edge121212:${HF_TOKEN}@huggingface.co/spaces/edge121212/course-ta" \
+            main:main
