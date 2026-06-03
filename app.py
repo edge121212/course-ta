@@ -184,10 +184,34 @@ def _generate_quiz(topic: str, num: int, adaptive: bool):
 
 
 with st.expander("互動測驗　·　計分與依弱點適性出題", expanded=True):
+    # 讓助教讀教材、列出主題（字卡選擇）
+    if st.button("讓助教讀教材、列出可測主題", key="suggest_topics"):
+        if document_count() == 0:
+            st.warning("知識庫是空的，請先在左側上傳並匯入教材。")
+        elif not ss.api_key.strip():
+            st.warning("請先在左側輸入 Gemini API Key。")
+        else:
+            with st.spinner("讀取教材、整理主題中…"):
+                try:
+                    ss.topic_suggestions = quiz.suggest_topics(
+                        api_key=ss.api_key, model=ss.get("model"))
+                    if not ss.topic_suggestions:
+                        st.info("教材中未能歸納出主題，請改用下方自訂主題。")
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"讀取主題失敗：{e}")
+                    log.exception("suggest_topics 失敗")
+
+    picked = None
+    if ss.get("topic_suggestions"):
+        picked = st.pills("點選一個主題出題", ss.topic_suggestions,
+                          selection_mode="single", key="topic_pills")
+
     c1, c2, c3 = st.columns([0.5, 0.25, 0.25])
-    it_topic = c1.text_input("主題", placeholder="例如：記憶體階層、CPU 結構", key="iquiz_topic")
+    custom_topic = c1.text_input("或自訂主題", placeholder="例如：記憶體階層、CPU 結構",
+                                 key="iquiz_topic")
     it_num = c2.selectbox("題數", [3, 5, 10], index=1, key="iquiz_num")
     it_mode = c3.selectbox("出題模式", ["一般（依主題）", "適性（依我的弱點）"], key="iquiz_mode")
+    it_topic = picked or custom_topic
 
     if st.button("出題", type="primary", key="iquiz_gen"):
         if document_count() == 0:

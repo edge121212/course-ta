@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .llm import get_llm
-from .vectorstore import get_retriever
+from .vectorstore import get_retriever, get_vectorstore
 from .workflows import format_context
 
 
@@ -36,6 +36,41 @@ _SYSTEM = (
 
 def _retrieve_for(query: str, k: int = 6):
     return get_retriever(k=k).invoke(query or "課程重點")
+
+
+# ---------------------------------------------------------------------------
+# 讓助教讀教材、列出可測主題（給 UI 字卡選擇用）
+# ---------------------------------------------------------------------------
+class _Topics(BaseModel):
+    topics: list[str] = Field(description="適合出測驗的核心主題清單，每個簡短")
+
+
+def suggest_topics(api_key: str | None = None, model: str | None = None,
+                   n: int = 8) -> list[str]:
+    """讀取已上傳教材，回傳 n 個適合出測驗的核心主題（給字卡選擇）。"""
+    data = get_vectorstore()._collection.get(include=["documents"])
+    docs = data.get("documents") or []
+    if not docs:
+        return []
+    # 在整份教材均勻取樣，避免只看到開頭
+    stride = max(1, len(docs) // 40)
+    sample = docs[::stride][:40]
+    corpus = "\n---\n".join((d or "")[:300] for d in sample)
+
+    llm = get_llm(api_key, model).with_structured_output(_Topics)
+    system = (
+        f"你是課程助教。根據以下教材片段，歸納出 {n} 個最適合用來出測驗的『核心主題／觀念』。"
+        "每個主題簡短（不超過 12 字）、彼此不重複、由重要到次要。請用繁體中文。"
+    )
+    result: _Topics = llm.invoke([("system", system), ("human", f"教材片段：\n{corpus}")])
+    # 去重並截斷
+    seen, out = set(), []
+    for t in result.topics:
+        t = (t or "").strip()
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out[:n]
 
 
 def generate(topic: str, num: int = 5, api_key: str | None = None,
