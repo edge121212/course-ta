@@ -317,47 +317,52 @@ if prompt:
         with st.chat_message("assistant"):
             use_agent = st.session_state.get("agent_mode", True)
             verify_on = st.session_state.get("verify_on", True)
-            steps, grounded = None, None
-            spin = "規劃並執行中…" if use_agent else f"{TASK_LABEL[classify(prompt)]}　生成中…"
-            with st.spinner(spin):
-                try:
-                    log.info("提問 agent=%s verify=%s model=%s q=%r",
-                             use_agent, verify_on, st.session_state.get("model"), prompt)
-                    if use_agent:
+            steps = grounded = None
+            is_clarify = False
+            log.info("提問 agent=%s verify=%s model=%s q=%r",
+                     use_agent, verify_on, st.session_state.get("model"), prompt)
+            try:
+                if use_agent:
+                    with st.status("助教思考中…", expanded=True) as status:
                         res = agent.run_agent(
-                            prompt, api_key=st.session_state.api_key,
-                            model=st.session_state.get("model"), verify_qa=verify_on)
-                        answer = res["answer"]
-                        sources = res["sources"]
-                        steps = res["steps"] if res["multi"] else None
-                        grounded = res["grounded"]
-                    else:
+                            prompt, st.session_state.session_id,
+                            api_key=st.session_state.api_key,
+                            model=st.session_state.get("model"), verify_qa=verify_on,
+                            progress=lambda msg: status.write("· " + msg))
+                        status.update(label="完成", state="complete", expanded=False)
+                    answer = res["answer"]
+                    sources = res["sources"]
+                    steps = res["steps"] if res["multi"] else None
+                    grounded = res["grounded"]
+                    is_clarify = res.get("is_clarify", False)
+                else:
+                    with st.spinner(f"{TASK_LABEL[classify(prompt)]}　生成中…"):
                         task = classify(prompt)
                         state = run(prompt, api_key=st.session_state.api_key,
                                     model=st.session_state.get("model"))
                         answer = state["answer"]
                         sources = state.get("sources") if task == "qa" else None
-                except MissingAPIKeyError as e:
-                    answer, sources = str(e), None
-                    log.warning("缺少 API key：%s", e)
-                except Exception as e:  # noqa: BLE001
-                    answer, sources = f"生成失敗：{e}", None
-                    log.exception("生成失敗 model=%s q=%r",
-                                  st.session_state.get("model"), prompt)
+            except MissingAPIKeyError as e:
+                answer, sources = str(e), None
+                log.warning("缺少 API key：%s", e)
+            except Exception as e:  # noqa: BLE001
+                answer, sources = f"生成失敗：{e}", None
+                log.exception("生成失敗 model=%s q=%r",
+                              st.session_state.get("model"), prompt)
 
-            # 顯示 agent 規劃的步驟（複合需求時）
             if steps:
-                plan_txt = "　".join(
-                    f"{i+1}. {s['note']}" for i, s in enumerate(steps))
+                plan_txt = "　".join(f"{i+1}. {s['note']}" for i, s in enumerate(steps))
                 st.caption(f"規劃 {len(steps)} 個步驟　·　{plan_txt}")
 
             st.markdown(answer)
 
-            if grounded is True:
+            if is_clarify:
+                st.caption("請補充說明後，我再為你回答")
+            elif grounded is True:
                 st.caption("✓ 已逐句核對教材")
             elif grounded is False:
                 st.caption("部分內容教材未涵蓋，已修正")
-            if sources:
+            if sources and not is_clarify:
                 srcs = "、".join(f"{s['source']} 第{s['page']}頁" for s in sources)
                 st.caption(f"引用來源：{srcs}")
 
