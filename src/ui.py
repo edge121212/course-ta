@@ -18,11 +18,18 @@ _CSS = """
 }
 
 /* ---- 整體 ---- */
-.stApp{ background:var(--bg); }
+.stApp{ background:var(--bg); color:var(--ink); }
 html, body, .stApp, input, textarea, button, select,
-[class*="st-"], [data-testid]{
+p, li, a, label, h1,h2,h3,h4,h5,h6,
+.stMarkdown, [data-testid="stMarkdownContainer"], [data-testid="stWidgetLabel"]{
   font-family:'Noto Sans TC', system-ui, -apple-system, sans-serif;
-  color:var(--ink);
+}
+/* 還原 Material 圖示字型，避免 expander 箭頭、上傳圖示變成文字疊在一起 */
+[data-testid="stIconMaterial"],
+.material-icons, .material-icons-outlined,
+.material-symbols-outlined, .material-symbols-rounded,
+[class^="material-"], [class*=" material-"]{
+  font-family:'Material Symbols Rounded','Material Symbols Outlined','Material Icons Outlined','Material Icons' !important;
 }
 
 /* 隱藏 Streamlit 預設裝飾，去除工具味 */
