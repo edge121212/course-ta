@@ -1,4 +1,8 @@
-"""ChromaDB 向量庫與 HuggingFace embedding 的封裝。"""
+"""ChromaDB 向量庫與 HuggingFace embedding 的封裝。
+
+知識庫『依 session 分離』：每位使用者(session_id)有自己的 Chroma collection，
+彼此的教材互不可見、互不影響。embedding 模型則全域共用（無狀態）。
+"""
 from __future__ import annotations
 
 from functools import lru_cache
@@ -18,33 +22,39 @@ def get_embeddings() -> HuggingFaceEmbeddings:
     )
 
 
-@lru_cache(maxsize=1)
-def get_vectorstore() -> Chroma:
-    """取得（或建立）持久化的 Chroma 向量庫。"""
+def _collection_name(session_id: str) -> str:
+    """把 session_id 轉成合法的 Chroma collection 名稱（3-63 字、英數/底線）。"""
+    sid = "".join(c for c in (session_id or "default") if c.isalnum()) or "default"
+    return f"{config.COLLECTION_NAME}_{sid}"[:63]
+
+
+@lru_cache(maxsize=128)
+def get_vectorstore(session_id: str) -> Chroma:
+    """取得（或建立）該 session 專屬的持久化 Chroma 向量庫。"""
     return Chroma(
-        collection_name=config.COLLECTION_NAME,
+        collection_name=_collection_name(session_id),
         embedding_function=get_embeddings(),
         persist_directory=str(config.CHROMA_DIR),
     )
 
 
-def get_retriever(k: int = config.RETRIEVE_K):
-    """回傳相似度檢索器；跨所有已上傳文件檢索（多文件檢索）。"""
-    return get_vectorstore().as_retriever(search_kwargs={"k": k})
+def get_retriever(session_id: str, k: int = config.RETRIEVE_K):
+    """回傳該 session 的相似度檢索器（跨該使用者所有已上傳文件）。"""
+    return get_vectorstore(session_id).as_retriever(search_kwargs={"k": k})
 
 
-def document_count() -> int:
-    """目前向量庫中的 chunk 數量。"""
+def document_count(session_id: str) -> int:
+    """該 session 向量庫中的 chunk 數量。"""
     try:
-        return get_vectorstore()._collection.count()
+        return get_vectorstore(session_id)._collection.count()
     except Exception:
         return 0
 
 
-def list_sources() -> dict[str, int]:
-    """回傳 {來源檔名: 片段數}，依檔名排序。"""
+def list_sources(session_id: str) -> dict[str, int]:
+    """回傳該 session 的 {來源檔名: 片段數}，依檔名排序。"""
     try:
-        data = get_vectorstore()._collection.get(include=["metadatas"])
+        data = get_vectorstore(session_id)._collection.get(include=["metadatas"])
     except Exception:
         return {}
     counts: dict[str, int] = {}
@@ -54,9 +64,9 @@ def list_sources() -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def delete_source(name: str) -> int:
-    """刪除某來源檔的所有片段，回傳刪除前該檔的片段數。"""
-    vs = get_vectorstore()
+def delete_source(session_id: str, name: str) -> int:
+    """刪除該 session 某來源檔的所有片段，回傳刪除前該檔的片段數。"""
+    vs = get_vectorstore(session_id)
     before = len(vs._collection.get(where={"source": name}).get("ids") or [])
     if before:
         vs._collection.delete(where={"source": name})

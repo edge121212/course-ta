@@ -18,8 +18,8 @@ def _splitter() -> RecursiveCharacterTextSplitter:
     )
 
 
-def ingest_pdf(path: str | Path) -> int:
-    """匯入單一 PDF，回傳新增的 chunk 數量。
+def ingest_pdf(path: str | Path, session_id: str) -> int:
+    """匯入單一 PDF 到該 session 的知識庫，回傳新增的 chunk 數量。
 
     metadata 會保留來源檔名與頁碼，供問答時顯示「引用來源」。
     """
@@ -37,5 +37,5 @@ def ingest_pdf(path: str | Path) -> int:
             c.metadata["page"] = int(c.metadata["page"]) + 1
 
     if chunks:
-        get_vectorstore().add_documents(chunks)
+        get_vectorstore(session_id).add_documents(chunks)
     return len(chunks)

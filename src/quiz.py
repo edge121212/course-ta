@@ -34,8 +34,8 @@ _SYSTEM = (
 )
 
 
-def _retrieve_for(query: str, k: int = 6):
-    return get_retriever(k=k).invoke(query or "課程重點")
+def _retrieve_for(session_id: str, query: str, k: int = 6):
+    return get_retriever(session_id, k=k).invoke(query or "課程重點")
 
 
 # ---------------------------------------------------------------------------
@@ -45,10 +45,10 @@ class _Topics(BaseModel):
     topics: list[str] = Field(description="適合出測驗的核心主題清單，每個簡短")
 
 
-def suggest_topics(api_key: str | None = None, model: str | None = None,
-                   n: int = 8) -> list[str]:
-    """讀取已上傳教材，回傳 n 個適合出測驗的核心主題（給字卡選擇）。"""
-    data = get_vectorstore()._collection.get(include=["documents"])
+def suggest_topics(session_id: str, api_key: str | None = None,
+                   model: str | None = None, n: int = 8) -> list[str]:
+    """讀取該 session 已上傳教材，回傳 n 個適合出測驗的核心主題（給字卡選擇）。"""
+    data = get_vectorstore(session_id)._collection.get(include=["documents"])
     docs = data.get("documents") or []
     if not docs:
         return []
@@ -73,17 +73,17 @@ def suggest_topics(api_key: str | None = None, model: str | None = None,
     return out[:n]
 
 
-def generate(topic: str, num: int = 5, api_key: str | None = None,
+def generate(session_id: str, topic: str, num: int = 5, api_key: str | None = None,
              model: str | None = None,
              focus_concepts: list[str] | None = None) -> dict:
-    """產生一份結構化測驗。
+    """產生一份結構化測驗（檢索該 session 自己的教材）。
 
     回傳 {questions: [..], sources: [..], focus: [..]}。
     focus_concepts 有值時，會偏向針對這些弱點觀念出題（適性模式）。
     """
     # 檢索查詢：適性模式用弱點觀念串起來，否則用主題
     query = "、".join(focus_concepts) if focus_concepts else topic
-    docs = _retrieve_for(query)
+    docs = _retrieve_for(session_id, query)
     sources = [
         {"source": d.metadata.get("source", "未知"), "page": d.metadata.get("page", "?")}
         for d in docs
@@ -109,8 +109,8 @@ def generate_adaptive(session_id: str, topic: str = "", num: int = 5,
                       api_key: str | None = None, model: str | None = None) -> dict:
     """依該 session 的弱點觀念出下一份測驗。"""
     weak = db.weak_concepts(session_id, limit=5)
-    return generate(topic or "課程重點", num=num, api_key=api_key, model=model,
-                    focus_concepts=weak or None)
+    return generate(session_id, topic or "課程重點", num=num, api_key=api_key,
+                    model=model, focus_concepts=weak or None)
 
 
 def grade(questions: list[dict], user_answers: list[str]) -> list[dict]:

@@ -22,6 +22,7 @@ _QUIZ_KW = ("出題", "題目", "考題", "練習題", "選擇題", "測驗", "q
 
 class AssistantState(TypedDict, total=False):
     question: str
+    session_id: str
     api_key: str
     model: str
     task: Task
@@ -46,7 +47,7 @@ def route_node(state: AssistantState) -> AssistantState:
 
 
 def retrieve_node(state: AssistantState) -> AssistantState:
-    docs = get_retriever().invoke(state["question"])
+    docs = get_retriever(state["session_id"]).invoke(state["question"])
     sources = [
         {"source": d.metadata.get("source", "未知"), "page": d.metadata.get("page", "?")}
         for d in docs
@@ -97,30 +98,15 @@ def build_graph():
 _APP = None
 
 
-def make_quiz(topic: str, num: int = 5, qtype: str = "選擇題",
-              api_key: str | None = None, model: str | None = None) -> dict:
-    """專用出題：依主題檢索教材 → 生成測驗。供 UI 的「生成小測驗」按鈕使用。
-
-    回傳 {quiz, sources}。topic 直接拿來做向量檢索，故主題越明確、題目越貼近教材。
-    """
-    docs = get_retriever().invoke(topic or "課程重點")
-    sources = [
-        {"source": d.metadata.get("source", "未知"), "page": d.metadata.get("page", "?")}
-        for d in docs
-    ]
-    quiz = workflows.generate_quiz(
-        topic, docs, api_key=api_key, model=model, num=num, qtype=qtype
-    )
-    return {"quiz": quiz, "sources": sources}
-
-
-def run(question: str, api_key: str | None = None,
+def run(question: str, session_id: str, api_key: str | None = None,
         model: str | None = None) -> AssistantState:
     """執行完整流程，回傳最終 state（含 answer 與 sources）。
 
+    session_id：用來檢索該使用者自己的教材庫。
     api_key／model：使用者在 UI 輸入/選的；未提供則退回 .env / 預設。
     """
     global _APP
     if _APP is None:
         _APP = build_graph()
-    return _APP.invoke({"question": question, "api_key": api_key, "model": model})
+    return _APP.invoke({"question": question, "session_id": session_id,
+                        "api_key": api_key, "model": model})

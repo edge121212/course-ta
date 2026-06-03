@@ -96,8 +96,8 @@ def _is_exam_prep(question: str) -> bool:
 # ---------------------------------------------------------------------------
 # 檢索 + 自我修正（B）
 # ---------------------------------------------------------------------------
-def _retrieve(query: str):
-    docs = get_retriever().invoke(query or "課程重點")
+def _retrieve(session_id: str, query: str):
+    docs = get_retriever(session_id).invoke(query or "課程重點")
     sources = [
         {"source": d.metadata.get("source", "未知"), "page": d.metadata.get("page", "?")}
         for d in docs
@@ -115,9 +115,9 @@ def _rewrite_query(question: str, api_key, model) -> str:
     return to_text(get_llm(api_key, model).invoke(msgs).content).strip()
 
 
-def _qa_step(query: str, api_key, model, verify_qa: bool, prog: Progress):
+def _qa_step(session_id: str, query: str, api_key, model, verify_qa: bool, prog: Progress):
     """問答 + 自我查核 + 自我修正檢索（依據不足時換關鍵字再查一次）。"""
-    docs, sources = _retrieve(query)
+    docs, sources = _retrieve(session_id, query)
     answer = workflows.qa(query, docs, api_key, model)
     grounded = None
     if verify_qa:
@@ -126,7 +126,7 @@ def _qa_step(query: str, api_key, model, verify_qa: bool, prog: Progress):
         if grounded is False:
             prog("教材依據不足，換個關鍵字再查一次…")
             nq = _rewrite_query(query, api_key, model)
-            docs2, sources2 = _retrieve(nq)
+            docs2, sources2 = _retrieve(session_id, nq)
             ans2 = workflows.qa(query, docs2, api_key, model)
             v2 = workflows.verify(query, ans2, docs2, api_key, model)
             if v2["grounded"] or len(docs2):
@@ -148,7 +148,7 @@ def _exam_prep_step(query: str, session_id: str, api_key, model, prog: Progress)
     weak = db.weak_concepts(session_id, limit=6)
     prog("讀取你的測驗弱點…" + ("（" + "、".join(weak) + "）" if weak else "（尚無紀錄）"))
     topics = "、".join(weak) if weak else query
-    docs, sources = _retrieve(f"{query} {topics}")
+    docs, sources = _retrieve(session_id, f"{query} {topics}")
     msgs = ChatPromptTemplate.from_messages([
         ("system", _EXAM_SYS),
         ("human", "教材內容：\n{context}\n\n複習範圍：{scope}\n\n學生的弱點觀念：{weak}"),
@@ -177,15 +177,16 @@ def _exec_step(step: dict, session_id: str, api_key, model,
     action = step["action"]
     grounded = None
     if action == "summary":
-        docs, sources = _retrieve(step["query"])
+        docs, sources = _retrieve(session_id, step["query"])
         result = workflows.summarize(step["query"], docs, api_key, model)
     elif action == "quiz":
-        docs, sources = _retrieve(step["query"])
+        docs, sources = _retrieve(session_id, step["query"])
         result = workflows.generate_quiz(step["query"], docs, api_key=api_key, model=model)
     elif action == "exam_prep":
         result, sources = _exam_prep_step(step["query"], session_id, api_key, model, prog)
     else:  # qa
-        result, sources, grounded = _qa_step(step["query"], api_key, model, verify_qa, prog)
+        result, sources, grounded = _qa_step(
+            session_id, step["query"], api_key, model, verify_qa, prog)
     return {"action": action, "note": step["note"], "result": result,
             "sources": sources, "grounded": grounded}
 

@@ -113,6 +113,12 @@ def load_history(session_id: str) -> list[dict]:
     return history
 
 
+def clear_messages(session_id: str) -> None:
+    """清空某 session 的對話訊息（保留教材與測驗紀錄）。"""
+    with _conn() as conn:
+        conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+
+
 def list_sessions() -> list[str]:
     with _conn() as conn:
         rows = conn.execute(

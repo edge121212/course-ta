@@ -102,7 +102,7 @@ with st.sidebar:
             dest.write_bytes(f.getbuffer())
             try:
                 with st.spinner(f"切割並嵌入 {f.name} …"):
-                    n = ingest_pdf(dest)
+                    n = ingest_pdf(dest, st.session_state.session_id)
                 st.success(f"{f.name}：新增 {n} 個片段")
                 log.info("匯入成功 %s：%d 片段", f.name, n)
             except Exception as e:  # noqa: BLE001
@@ -111,7 +111,7 @@ with st.sidebar:
         st.rerun()
 
     # ---- 已匯入文件清單（可刪除）----
-    sources = list_sources()
+    sources = list_sources(st.session_state.session_id)
     if not sources:
         st.caption("尚無文件，請於上方上傳並匯入。")
     else:
@@ -122,26 +122,24 @@ with st.sidebar:
                 unsafe_allow_html=True,
             )
             if col_b.button("移除", key=f"del_{name}", help=f"從知識庫移除 {name}"):
-                removed = delete_source(name)
+                removed = delete_source(st.session_state.session_id, name)
                 fp = config.UPLOAD_DIR / name
                 if fp.exists():
                     fp.unlink()
                 st.success(f"已移除 {name}（{removed} 片段）")
                 log.info("刪除文件 %s：%d 片段", name, removed)
                 st.rerun()
-        st.caption(f"知識庫共 {document_count()} 個片段")
+        st.caption(f"知識庫共 {document_count(st.session_state.session_id)} 個片段")
 
     st.markdown("")
     ui.section("對話")
-    if st.button("開新對話"):
-        sid = uuid.uuid4().hex[:12]
-        st.session_state.session_id = sid
-        st.query_params["sid"] = sid
+    if st.button("清空對話"):
+        db.clear_messages(st.session_state.session_id)
         st.session_state.messages = []
         st.session_state.iquiz = st.session_state.iquiz_result = None
         st.session_state.iquiz_submitted = False
         st.rerun()
-    st.caption(f"專屬 session：{st.session_state.session_id}　·　資料與他人隔離")
+    st.caption(f"專屬空間：{st.session_state.session_id}　·　教材與紀錄皆與他人隔離")
 
 # ---- 主畫面 ----
 ui.hero(
@@ -165,7 +163,7 @@ def _generate_quiz(topic: str, num: int, adaptive: bool):
             res = quiz.generate_adaptive(ss.session_id, topic, num=num,
                                          api_key=ss.api_key, model=ss.get("model"))
         else:
-            res = quiz.generate(topic or "課程重點", num=num,
+            res = quiz.generate(ss.session_id, topic or "課程重點", num=num,
                                 api_key=ss.api_key, model=ss.get("model"))
         ss.iquiz = {"questions": res["questions"], "sources": res["sources"],
                     "meta": {"topic": topic, "mode": "adaptive" if adaptive else "normal",
@@ -186,7 +184,7 @@ def _generate_quiz(topic: str, num: int, adaptive: bool):
 with st.expander("互動測驗　·　計分與依弱點適性出題", expanded=True):
     # 讓助教讀教材、列出主題（字卡選擇）
     if st.button("讓助教讀教材、列出可測主題", key="suggest_topics"):
-        if document_count() == 0:
+        if document_count(st.session_state.session_id) == 0:
             st.warning("知識庫是空的，請先在左側上傳並匯入教材。")
         elif not ss.api_key.strip():
             st.warning("請先在左側輸入 Gemini API Key。")
@@ -194,7 +192,7 @@ with st.expander("互動測驗　·　計分與依弱點適性出題", expanded=
             with st.spinner("讀取教材、整理主題中…"):
                 try:
                     ss.topic_suggestions = quiz.suggest_topics(
-                        api_key=ss.api_key, model=ss.get("model"))
+                        ss.session_id, api_key=ss.api_key, model=ss.get("model"))
                     if not ss.topic_suggestions:
                         st.info("教材中未能歸納出主題，請改用下方自訂主題。")
                 except Exception as e:  # noqa: BLE001
@@ -214,7 +212,7 @@ with st.expander("互動測驗　·　計分與依弱點適性出題", expanded=
     it_topic = picked or custom_topic
 
     if st.button("出題", type="primary", key="iquiz_gen"):
-        if document_count() == 0:
+        if document_count(st.session_state.session_id) == 0:
             st.warning("知識庫是空的，請先在左側上傳並匯入教材。")
         elif not ss.api_key.strip():
             st.warning("請先在左側輸入 Gemini API Key。")
@@ -331,7 +329,7 @@ if prompt:
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    if document_count() == 0:
+    if document_count(st.session_state.session_id) == 0:
         warn = "知識庫目前是空的，請先在左側上傳並匯入課程 PDF。"
         with st.chat_message("assistant"):
             st.warning(warn)
@@ -363,7 +361,8 @@ if prompt:
                 else:
                     with st.spinner(f"{TASK_LABEL[classify(prompt)]}　生成中…"):
                         task = classify(prompt)
-                        state = run(prompt, api_key=st.session_state.api_key,
+                        state = run(prompt, st.session_state.session_id,
+                                    api_key=st.session_state.api_key,
                                     model=st.session_state.get("model"))
                         answer = state["answer"]
                         sources = state.get("sources") if task == "qa" else None
