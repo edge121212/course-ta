@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel, Field
 
 from .llm import get_llm
 
@@ -77,3 +78,32 @@ def generate_quiz(question: str, docs: list[Document],
                   api_key: str | None = None, model: str | None = None,
                   num: int = 5, qtype: str = "選擇題") -> str:
     return _run(_quiz_prompt(num, qtype), question, docs, api_key, model)
+
+
+# ---------------------------------------------------------------------------
+# 答案自我查核（功能 2）：生成後回教材逐句核對，刪除/修正無依據內容
+# ---------------------------------------------------------------------------
+class _Verdict(BaseModel):
+    grounded: bool = Field(description="修正後答案是否每句都有教材依據")
+    revised_answer: str = Field(description="刪除/修正無依據內容後的答案")
+
+
+_VERIFY_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "你是嚴格的查核員。檢查『待查核答案』是否每一句都能在『教材內容』中找到依據。"
+     "刪除或修正教材裡找不到依據、或與教材矛盾的句子；保留有依據的部分。"
+     "若修正後仍有實質內容且全部有依據，grounded 設為 true；"
+     "若答案大多無依據，保留有依據的部分並在結尾註明『教材未涵蓋其餘部分』，grounded 設為 false。"
+     "請用繁體中文，保持精簡。"),
+    ("human", "教材內容：\n{context}\n\n待查核答案：\n{answer}\n\n原問題：{question}"),
+])
+
+
+def verify(question: str, answer: str, docs: list[Document],
+           api_key: str | None = None, model: str | None = None) -> dict:
+    """回教材核對答案，回傳 {grounded: bool, answer: 修正後答案}。"""
+    llm = get_llm(api_key, model).with_structured_output(_Verdict)
+    msgs = _VERIFY_PROMPT.format_messages(
+        context=format_context(docs), answer=answer, question=question)
+    v: _Verdict = llm.invoke(msgs)
+    return {"grounded": v.grounded, "answer": v.revised_answer}

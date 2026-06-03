@@ -11,7 +11,7 @@ import uuid
 import pandas as pd
 import streamlit as st
 
-from src import analytics, config, db, quiz, ui
+from src import agent, analytics, config, db, quiz, ui
 from src.graph import classify, run
 from src.ingest import ingest_pdf
 from src.llm import MissingAPIKeyError, list_models
@@ -78,6 +78,17 @@ with st.sidebar:
     st.session_state.model = st.selectbox(
         "模型", st.session_state.model_options, index=0,
         help="若預設模型回報 404，按上方查詢實際可用的模型再選。",
+    )
+
+    st.markdown("")
+    ui.section("助教模式")
+    st.session_state.agent_mode = st.toggle(
+        "Agent 模式", value=st.session_state.get("agent_mode", True),
+        help="開啟後，助教會先『規劃步驟』再執行，能一次處理比較／又問又出題等複合需求。",
+    )
+    st.session_state.verify_on = st.toggle(
+        "答案自我查核", value=st.session_state.get("verify_on", True),
+        help="問答生成後，回教材逐句核對，刪除無依據內容並標示已核對。",
     )
 
     st.markdown("")
@@ -304,23 +315,48 @@ if prompt:
         db.save_message(st.session_state.session_id, "assistant", warn)
     else:
         with st.chat_message("assistant"):
-            task = classify(prompt)
-            with st.spinner(f"{TASK_LABEL[task]}　生成中…"):
+            use_agent = st.session_state.get("agent_mode", True)
+            verify_on = st.session_state.get("verify_on", True)
+            steps, grounded = None, None
+            spin = "規劃並執行中…" if use_agent else f"{TASK_LABEL[classify(prompt)]}　生成中…"
+            with st.spinner(spin):
                 try:
-                    log.info("提問 task=%s model=%s q=%r",
-                             task, st.session_state.get("model"), prompt)
-                    state = run(prompt, api_key=st.session_state.api_key,
-                                model=st.session_state.get("model"))
-                    answer = state["answer"]
-                    sources = state.get("sources") if task == "qa" else None
+                    log.info("提問 agent=%s verify=%s model=%s q=%r",
+                             use_agent, verify_on, st.session_state.get("model"), prompt)
+                    if use_agent:
+                        res = agent.run_agent(
+                            prompt, api_key=st.session_state.api_key,
+                            model=st.session_state.get("model"), verify_qa=verify_on)
+                        answer = res["answer"]
+                        sources = res["sources"]
+                        steps = res["steps"] if res["multi"] else None
+                        grounded = res["grounded"]
+                    else:
+                        task = classify(prompt)
+                        state = run(prompt, api_key=st.session_state.api_key,
+                                    model=st.session_state.get("model"))
+                        answer = state["answer"]
+                        sources = state.get("sources") if task == "qa" else None
                 except MissingAPIKeyError as e:
                     answer, sources = str(e), None
                     log.warning("缺少 API key：%s", e)
                 except Exception as e:  # noqa: BLE001
                     answer, sources = f"生成失敗：{e}", None
-                    log.exception("生成失敗 task=%s model=%s q=%r",
-                                  task, st.session_state.get("model"), prompt)
+                    log.exception("生成失敗 model=%s q=%r",
+                                  st.session_state.get("model"), prompt)
+
+            # 顯示 agent 規劃的步驟（複合需求時）
+            if steps:
+                plan_txt = "　".join(
+                    f"{i+1}. {s['note']}" for i, s in enumerate(steps))
+                st.caption(f"規劃 {len(steps)} 個步驟　·　{plan_txt}")
+
             st.markdown(answer)
+
+            if grounded is True:
+                st.caption("✓ 已逐句核對教材")
+            elif grounded is False:
+                st.caption("部分內容教材未涵蓋，已修正")
             if sources:
                 srcs = "、".join(f"{s['source']} 第{s['page']}頁" for s in sources)
                 st.caption(f"引用來源：{srcs}")
