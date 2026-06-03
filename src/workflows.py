@@ -9,7 +9,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from .llm import get_llm
+from .llm import get_llm, to_text
 
 
 def format_context(docs: list[Document]) -> str:
@@ -61,7 +61,7 @@ def _run(prompt: ChatPromptTemplate, question: str, docs: list[Document],
          api_key: str | None = None, model: str | None = None) -> str:
     chain = prompt | get_llm(api_key, model)
     resp = chain.invoke({"context": format_context(docs), "question": question})
-    return resp.content
+    return to_text(resp.content)
 
 
 def qa(question: str, docs: list[Document],

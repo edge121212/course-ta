@@ -12,6 +12,26 @@ class MissingAPIKeyError(RuntimeError):
     """缺少 Gemini API key 時拋出。"""
 
 
+def to_text(content) -> str:
+    """把 LLM 回應的 content 統一轉成純文字。
+
+    新版 Gemini 模型可能回傳『內容區塊清單』(list[dict]) 而非字串，
+    這裡將其中的文字區塊抽出合併，避免畫面出現 [{'type':'text',...}] 的原始結構。
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                if "text" in block:
+                    parts.append(str(block["text"]))
+        return "\n".join(p for p in parts if p)
+    return str(content)
+
+
 @lru_cache(maxsize=16)
 def _build(api_key: str, model: str) -> ChatGoogleGenerativeAI:
     """依 (key, model) 建立並快取 LLM。"""

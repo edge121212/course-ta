@@ -17,7 +17,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from . import db, workflows
-from .llm import get_llm
+from .llm import get_llm, to_text
 from .vectorstore import get_retriever
 
 Progress = Callable[[str], None]
@@ -112,7 +112,7 @@ def _rewrite_query(question: str, api_key, model) -> str:
                    "請改寫成更適合向量檢索的關鍵詞（同義詞、更具體的學術用語），只回傳關鍵字，不要解釋。"),
         ("human", question),
     ]
-    return get_llm(api_key, model).invoke(msgs).content.strip()
+    return to_text(get_llm(api_key, model).invoke(msgs).content).strip()
 
 
 def _qa_step(query: str, api_key, model, verify_qa: bool, prog: Progress):
@@ -157,7 +157,7 @@ def _exam_prep_step(query: str, session_id: str, api_key, model, prog: Progress)
         scope=query or "全部範圍",
         weak="、".join(weak) if weak else "（尚無測驗紀錄）",
     )
-    review = get_llm(api_key, model).invoke(msgs).content
+    review = to_text(get_llm(api_key, model).invoke(msgs).content)
 
     prog("針對弱點出練習題…")
     quiz_text = workflows.generate_quiz(
@@ -205,7 +205,7 @@ def _synthesize(question: str, results: list[dict], api_key, model) -> str:
         ("system", _SYNTH_SYS),
         ("human", "原始問題：{q}\n\n各步驟結果：\n{b}"),
     ]).format_messages(q=question, b=blocks)
-    return get_llm(api_key, model).invoke(msgs).content
+    return to_text(get_llm(api_key, model).invoke(msgs).content)
 
 
 # ---------------------------------------------------------------------------
